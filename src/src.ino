@@ -8,6 +8,8 @@
 MCUFRIEND_kbv tft;
 #include <TouchScreen.h>
 
+#include "TimerOne.h"
+
 #define _DEBUG
 
 const int XP=8,XM=A2,YP=A3,YM=9;	// ID = 0x7575
@@ -21,13 +23,15 @@ TSPoint tp;
 
 #define DEBOUNCE_DELAY 100
 
-uint16_t BOXWIDTH;
-uint16_t BOXHEIGHT;
-uint16_t ID;
 const uint8_t ORIENTATION = 1;	// LANDSCAPE
-
+uint16_t box_width;
+uint16_t box_height;
+uint16_t id;
+uint16_t bpm = 94;
 uint16_t xpos;
 uint16_t ypos;
+
+volatile uint8_t current_beat = 0;
 
 uint8_t slots[6][16] = {
 	{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
@@ -50,39 +54,90 @@ uint64_t last_toggled = 0;
 #define YELLOW  0xFFE0
 #define WHITE   0xFFFF
 
-void initialise_slots(MCUFRIEND_kbv tft) {
+void progress_beat(void) {
+	if (current_beat == 15) {
+		current_beat = 0;
+		return;
+	}
+
+	current_beat = current_beat + 1;
+}
+
+void initialize_timer(void) {
+	Timer1.initialize(1000000 * 60 / bpm);
+	Timer1.attachInterrupt(progress_beat);
+}
+
+void initialize_slots() {
 	for (int drum = 0; drum < 6; drum++) {
 		for (int beat = 0; beat < 16; beat++) {
-			int x = beat * BOXWIDTH;
-			int y = drum * BOXHEIGHT;
+			int x = beat * box_width;
+			int y = drum * box_height;
 			
 			if (slots[drum][beat] == 1) {
-				tft.fillRect(x + 1, y + 1, BOXWIDTH - 2, BOXHEIGHT - 2, BLUE);
+				tft.fillRect(x + 1, y + 1, box_width - 2, box_height - 2, BLUE);
 			} else {
-				tft.drawRect(x + 1, y + 1, BOXWIDTH - 2, BOXHEIGHT - 2, BLUE);
+				tft.drawRect(x + 1, y + 1, box_width - 2, box_height - 2, BLUE);
 			}
 		}
 	}
 }
 
-void toggle_slot(MCUFRIEND_kbv tft, int drum, int beat) {
+void toggle_slot(int drum, int beat) {
 	if (millis() - last_toggled < DEBOUNCE_DELAY) {
 		return;
 	}
 
 	last_toggled = millis();
 
-	int x = beat * BOXWIDTH;
-	int y = drum * BOXHEIGHT;	
+	int x = beat * box_width;
+	int y = drum * box_height;
 
-	tft.fillRect(x + 1, y + 1, BOXWIDTH - 2, BOXHEIGHT - 2, BLACK);
+	tft.fillRect(x + 1, y + 1, box_width - 2, box_height - 2, BLACK);
 
 	if (slots[drum][beat] == 1) {
 		slots[drum][beat] = 0;
-		tft.drawRect(x + 1, y + 1, BOXWIDTH - 2, BOXHEIGHT - 2, BLUE);
+		tft.drawRect(x + 1, y + 1, box_width - 2, box_height - 2, BLUE);
 	} else {
 		slots[drum][beat] = 1;
-		tft.fillRect(x + 1, y + 1, BOXWIDTH - 2, BOXHEIGHT - 2, BLUE);
+		tft.fillRect(x + 1, y + 1, box_width - 2, box_height - 2, BLUE);
+	}
+}
+
+uint8_t get_previous_beat(void) {
+	if (current_beat == 0) {
+		return 15;
+	}
+
+	return current_beat - 1;
+}
+
+void clear_previous_beat(void) {
+	uint8_t previous_beat = get_previous_beat();
+
+	Serial.println("current-beat: " + String(current_beat));
+	Serial.println("prev-beat: " + String(previous_beat));
+
+	for (int drum = 0; drum < 6; drum++) {
+		int x = previous_beat * box_width;
+		int y = drum * box_height;
+
+		if (slots[drum][previous_beat] == 1) {
+			tft.fillRect(x + 1, y + 1, box_width - 2, box_height - 2, BLUE);
+		} else {
+			tft.drawRect(x + 1, y + 1, box_width - 2, box_height - 2, BLUE);
+		}
+	}
+}
+
+void highlight_current_beat(void) {
+	clear_previous_beat();
+
+	for (int drum = 0; drum < 6; drum++) {
+		int x = current_beat * box_width;
+		int y = drum * box_height;
+
+		tft.drawRect(x + 1, y + 1, box_width - 2, box_height - 2, WHITE);
 	}
 }
 
@@ -92,19 +147,22 @@ void setup(void) {
 	#endif
 
     tft.reset();
-    ID = tft.readID();
-    tft.begin(ID);
+    id = tft.readID();
+    tft.begin(id);
     tft.setRotation(ORIENTATION);
     tft.fillScreen(BLACK);
 
-    BOXWIDTH = tft.width() / 16;
-	BOXHEIGHT = tft.height() / 6;
+    box_width = tft.width() / 16;
+	box_height = tft.height() / 6;
     tft.fillScreen(BLACK);
 
-	initialise_slots(tft);
+	initialize_slots();
+	initialize_timer();
 }
 
 void loop() {
+	highlight_current_beat();
+
     tp = ts.getPoint();
 
     // If sharing pins, need to fix the directions of the touchscreen pins
@@ -119,7 +177,7 @@ void loop() {
     xpos = map(tp.y, TS_TOP, TS_BOT, 0, tft.width());
     ypos = map(tp.x, TS_RT, TS_LEFT, 0, tft.height());
 
-	int beat = xpos / BOXWIDTH;
-	int drum = ypos / BOXHEIGHT;
-	toggle_slot(tft, drum, beat);
+	int beat = xpos / box_width;
+	int drum = ypos / box_height;
+	toggle_slot(drum, beat);
 }
