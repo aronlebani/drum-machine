@@ -87,7 +87,8 @@ void initialize_display(void) {
 }
 
 void initialize_timer(void) {
-	Timer1.initialize(1000000 * 60 / bpm);
+	// Divide by 4 because we're using 16th notes
+	Timer1.initialize(1000000 * 60 / bpm / 4);
 	Timer1.attachInterrupt(progress_beat);
 }
 
